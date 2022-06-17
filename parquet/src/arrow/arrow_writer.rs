@@ -36,6 +36,7 @@ use crate::{
     data_type::*,
     file::writer::{FileWriter, ParquetWriter, RowGroupWriter, SerializedFileWriter},
 };
+use crate::file::metadata::KeyValue;
 
 /// Arrow writer
 ///
@@ -126,6 +127,13 @@ impl<W: 'static + ParquetWriter> ArrowWriter<W> {
     /// Close and finalize the underlying Parquet writer
     pub fn close(&mut self) -> Result<parquet_format::FileMetaData> {
         self.writer.close()
+    }
+
+    pub fn close_with_metadata(
+        &mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<parquet_format::FileMetaData> {
+        self.writer.close_with_metadata(key_value_metadata)
     }
 }
 

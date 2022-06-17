@@ -83,6 +83,11 @@ pub trait FileWriter {
     /// Can be called multiple times. It is up to implementation to either result in
     /// no-op, or return an `Err` for subsequent calls.
     fn close(&mut self) -> Result<parquet::FileMetaData>;
+
+    fn close_with_metadata(
+        &mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<parquet::FileMetaData>;
 }
 
 /// Parquet row group writer API.
@@ -188,7 +193,47 @@ impl<W: ParquetWriter> SerializedFileWriter<W> {
                 .iter()
                 .map(|v| v.to_thrift())
                 .collect(),
-            key_value_metadata: self.props.key_value_metadata().to_owned(),
+            key_value_metadata: self.props.key_value_metadata.to_owned(),
+            created_by: Some(self.props.created_by().to_owned()),
+            column_orders: None,
+            encryption_algorithm: None,
+            footer_signing_key_metadata: None,
+        };
+
+        // Write file metadata
+        let start_pos = self.buf.seek(SeekFrom::Current(0))?;
+        {
+            let mut protocol = TCompactOutputProtocol::new(&mut self.buf);
+            file_metadata.write_to_out_protocol(&mut protocol)?;
+            protocol.flush()?;
+        }
+        let end_pos = self.buf.seek(SeekFrom::Current(0))?;
+
+        // Write footer
+        let mut footer_buffer: [u8; FOOTER_SIZE] = [0; FOOTER_SIZE];
+        let metadata_len = (end_pos - start_pos) as i32;
+        LittleEndian::write_i32(&mut footer_buffer, metadata_len);
+        (&mut footer_buffer[4..]).write_all(&PARQUET_MAGIC)?;
+        self.buf.write_all(&footer_buffer)?;
+        Ok(file_metadata)
+    }
+
+    /// Assembles and writes metadata at the end of the file.
+    fn write_metadata_with_kv(
+        &mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<parquet::FileMetaData> {
+        let file_metadata = parquet::FileMetaData {
+            version: self.props.writer_version().as_num(),
+            schema: types::to_thrift(self.schema.as_ref())?,
+            num_rows: self.total_num_rows as i64,
+            row_groups: self
+                .row_groups
+                .as_slice()
+                .iter()
+                .map(|v| v.to_thrift())
+                .collect(),
+            key_value_metadata,
             created_by: Some(self.props.created_by().to_owned()),
             column_orders: None,
             encryption_algorithm: None,
@@ -262,6 +307,18 @@ impl<W: 'static + ParquetWriter> FileWriter for SerializedFileWriter<W> {
         self.assert_closed()?;
         self.assert_previous_writer_closed()?;
         let metadata = self.write_metadata()?;
+        self.is_closed = true;
+        Ok(metadata)
+    }
+
+    #[inline]
+    fn close_with_metadata(
+        &mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<parquet::FileMetaData> {
+        self.assert_closed()?;
+        self.assert_previous_writer_closed()?;
+        let metadata = self.write_metadata_with_kv(key_value_metadata)?;
         self.is_closed = true;
         Ok(metadata)
     }
