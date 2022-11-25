@@ -183,7 +183,17 @@ impl<W: Write> SerializedFileWriter<W> {
     /// Closes and finalises file writer, returning the file metadata.
     pub fn close(mut self) -> Result<parquet::FileMetaData> {
         self.assert_previous_writer_closed()?;
-        let metadata = self.write_metadata()?;
+        let metadata = self.write_metadata_with_kv(None)?;
+        Ok(metadata)
+    }
+
+    /// Closes and finalises file writer with kv metadata, returning the file metadata.
+    pub fn close_with_metadata(
+        mut self,
+        key_value_metadata: Option<Vec<KeyValue>>,
+    ) -> Result<parquet::FileMetaData> {
+        self.assert_previous_writer_closed()?;
+        let metadata = self.write_metadata_with_kv(key_value_metadata)?;
         Ok(metadata)
     }
 
@@ -273,7 +283,7 @@ impl<W: Write> SerializedFileWriter<W> {
     }
 
     /// Assembles and writes metadata at the end of the file.
-    fn write_metadata(&mut self) -> Result<parquet::FileMetaData> {
+    fn write_metadata_with_kv(&mut self,kv_metadata:Option<Vec<KeyValue>>) -> Result<parquet::FileMetaData> {
         let num_rows = self.row_groups.iter().map(|x| x.num_rows()).sum();
 
         let mut row_groups = self
@@ -288,12 +298,15 @@ impl<W: Write> SerializedFileWriter<W> {
         self.write_column_indexes(&mut row_groups)?;
         self.write_offset_indexes(&mut row_groups)?;
 
+        let key_value_metadata=if kv_metadata.is_some(){
+            kv_metadata
+        }else { self.props.key_value_metadata().cloned() };
         let file_metadata = parquet::FileMetaData {
             num_rows,
             row_groups,
             version: self.props.writer_version().as_num(),
             schema: types::to_thrift(self.schema.as_ref())?,
-            key_value_metadata: self.props.key_value_metadata().cloned(),
+            key_value_metadata,
             created_by: Some(self.props.created_by().to_owned()),
             column_orders: None,
             encryption_algorithm: None,
@@ -329,7 +342,7 @@ impl<W: Write> SerializedFileWriter<W> {
     /// Writes the file footer and returns the underlying writer.
     pub fn into_inner(mut self) -> Result<W> {
         self.assert_previous_writer_closed()?;
-        let _ = self.write_metadata()?;
+        let _ = self.write_metadata_with_kv(None)?;
 
         Ok(self.buf.into_inner())
     }

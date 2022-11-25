@@ -32,7 +32,7 @@ use super::schema::{
 use crate::arrow::arrow_writer::byte_array::ByteArrayWriter;
 use crate::column::writer::{ColumnWriter, ColumnWriterImpl};
 use crate::errors::{ParquetError, Result};
-use crate::file::metadata::RowGroupMetaDataPtr;
+use crate::file::metadata::{KeyValue, RowGroupMetaDataPtr};
 use crate::file::properties::WriterProperties;
 use crate::file::writer::SerializedRowGroupWriter;
 use crate::{data_type::*, file::writer::SerializedFileWriter};
@@ -230,6 +230,12 @@ impl<W: Write> ArrowWriter<W> {
     pub fn close(mut self) -> Result<crate::format::FileMetaData> {
         self.flush()?;
         self.writer.close()
+    }
+
+    /// Close and finalize the underlying Parquet writer with kv metadata
+    pub fn close_with_metadata(mut self,key_value_metadata: Option<Vec<KeyValue>>) -> Result<crate::format::FileMetaData> {
+        self.flush()?;
+        self.writer.close_with_metadata(key_value_metadata)
     }
 }
 
